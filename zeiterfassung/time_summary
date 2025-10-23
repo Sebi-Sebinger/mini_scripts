@@ -1,0 +1,90 @@
+#!/bin/zsh
+
+# Configurable directories via environment variables
+ZEIT_DIR="${TIMETRACKING_DIR:-$HOME/.timetracking}"
+SUMMARY_FILE="$ZEIT_DIR/Monthly-Summary.txt"
+CURRENT_MONTH=$(date +"%B-%Y")
+
+# Job as parameter (optional)
+SPECIFIC_JOB="$1"
+
+# Function: Calculate sum for a job
+function calculate_job_sum {
+  local job_name="$1"
+  local job_file="$ZEIT_DIR/${job_name// /_}.txt"
+  
+  if [[ ! -f "$job_file" ]]; then
+    return
+  fi
+  
+  local sum=0
+  while IFS= read -r line; do
+    local month_key=$(echo "$line" | cut -d'-' -f1-2)
+    if [[ "$month_key" == "$CURRENT_MONTH" ]]; then
+      local value=$(echo "$line" | sed -E 's/.*= ([0-9.]+) hrs/\1/')
+      [[ -n "$value" ]] && sum=$(echo "$sum + $value" | bc)
+    fi
+  done < "$job_file"
+  
+  # If nothing was found → set to 0
+  [[ -z "$sum" ]] && sum=0
+  
+  echo "$sum"
+}
+
+# Function: Update summary for a job
+function update_job_summary {
+  local job_name="$1"
+  local sum=$(calculate_job_sum "$job_name")
+  local job_key="${job_name}|${CURRENT_MONTH}"
+  
+  # Remove old entries for this job and month
+  if [[ -f "$SUMMARY_FILE" ]]; then
+    grep -v "^${job_key} =" "$SUMMARY_FILE" > "$SUMMARY_FILE.tmp" 2>/dev/null
+    mv "$SUMMARY_FILE.tmp" "$SUMMARY_FILE" 2>/dev/null
+  fi
+  
+  # Append new line
+  printf "%s = %.2f hrs\n" "$job_key" "$sum" >> "$SUMMARY_FILE"
+  
+  echo "  $job_name: $sum hrs"
+}
+
+# Main program
+echo "\n=== Monthly Summary for $CURRENT_MONTH ==="
+
+if [[ -n "$SPECIFIC_JOB" ]]; then
+  # Only for specific job
+  update_job_summary "$SPECIFIC_JOB"
+else
+  # Go through all jobs
+  JOBS_FILE="$ZEIT_DIR/jobs.txt"
+  if [[ -f "$JOBS_FILE" ]] && [[ -s "$JOBS_FILE" ]]; then
+    while IFS= read -r job; do
+      update_job_summary "$job"
+    done < "$JOBS_FILE"
+  else
+    echo "No jobs available."
+  fi
+fi
+
+# Calculate total sum
+echo "\n=== Total Overview for $CURRENT_MONTH ==="
+if [[ -f "$SUMMARY_FILE" ]]; then
+  total=0
+  while IFS= read -r line; do
+    # Check if line belongs to current month
+    if echo "$line" | grep -q "|${CURRENT_MONTH} ="; then
+      job_name=$(echo "$line" | cut -d'|' -f1)
+      value=$(echo "$line" | sed -E 's/.*= ([0-9.]+) hrs/\1/')
+      printf "  %-30s %.2f hrs\n" "$job_name:" "$value"
+      total=$(echo "$total + $value" | bc)
+    fi
+  done < "$SUMMARY_FILE"
+  printf "\n  %-30s %.2f hrs\n" "TOTAL:" "$total"
+else
+  echo "No data available."
+fi
+
+echo "========================================\n"
+

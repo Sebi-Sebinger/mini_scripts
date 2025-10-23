@@ -1,0 +1,274 @@
+#!/bin/zsh
+export LC_ALL=C
+export LANG=C
+
+# Configurable directories via environment variables
+ZEIT_DIR="${TIMETRACKING_DIR:-$HOME/.timetracking}"
+JOBS_FILE="$ZEIT_DIR/jobs.txt"
+
+# Create time tracking directory if it doesn't exist
+[[ ! -d "$ZEIT_DIR" ]] && mkdir -p "$ZEIT_DIR"
+
+# Create jobs file if it doesn't exist
+[[ ! -f "$JOBS_FILE" ]] && touch "$JOBS_FILE"
+
+# Function: List jobs
+function list_jobs {
+  echo "\n=== Available Jobs ==="
+  if [[ ! -s "$JOBS_FILE" ]]; then
+    echo "No jobs available."
+    return 1
+  fi
+  local i=1
+  while IFS= read -r job; do
+    echo "  $i) $job"
+    ((i++))
+  done < "$JOBS_FILE"
+  echo "======================"
+  return 0
+}
+
+# Function: Create new job
+function add_job {
+  echo -n "\nEnter job name: "
+  read jobname
+  if [[ -z "$jobname" ]]; then
+    echo "No name entered. Aborted."
+    return
+  fi
+  # Check if job already exists
+  if grep -Fxq "$jobname" "$JOBS_FILE" 2>/dev/null; then
+    echo "Job '$jobname' already exists!"
+    return
+  fi
+  echo "$jobname" >> "$JOBS_FILE"
+  echo "Job '$jobname' has been created."
+}
+
+# Function: Delete job
+function delete_job {
+  if ! list_jobs; then
+    return
+  fi
+  echo -n "\nNumber of job to delete (0 = Cancel): "
+  read num
+  if [[ "$num" == "0" ]] || [[ -z "$num" ]]; then
+    echo "Cancelled."
+    return
+  fi
+  local selected_job=$(sed -n "${num}p" "$JOBS_FILE")
+  if [[ -z "$selected_job" ]]; then
+    echo "Invalid selection!"
+    return
+  fi
+  # Remove job from file
+  grep -Fxv "$selected_job" "$JOBS_FILE" > "$JOBS_FILE.tmp"
+  mv "$JOBS_FILE.tmp" "$JOBS_FILE"
+  echo "Job '$selected_job' has been deleted."
+}
+
+# Function: Select job
+function select_job {
+  if ! list_jobs; then
+    echo "Please create jobs first!"
+    return 1
+  fi
+  echo -n "\nSelect job number (0 = Cancel): "
+  read num
+  if [[ "$num" == "0" ]] || [[ -z "$num" ]]; then
+    return 1
+  fi
+  SELECTED_JOB=$(sed -n "${num}p" "$JOBS_FILE")
+  if [[ -z "$SELECTED_JOB" ]]; then
+    echo "Invalid selection!"
+    return 1
+  fi
+  echo "Job '$SELECTED_JOB' selected."
+  return 0
+}
+
+# Function: Job management
+function manage_jobs {
+  while true; do
+    echo "\n=== Job Management ==="
+    echo "  1) Select job"
+    echo "  2) Create new job"
+    echo "  3) Delete job"
+    echo "  4) Show jobs"
+    echo "  0) Back"
+    echo -n "Choice: "
+    read choice
+    case $choice in
+      1)
+        if select_job; then
+          return 0
+        fi
+        ;;
+      2)
+        add_job
+        ;;
+      3)
+        delete_job
+        ;;
+      4)
+        list_jobs
+        ;;
+      0)
+        return 1
+        ;;
+      *)
+        echo "Invalid input!"
+        ;;
+    esac
+  done
+}
+
+# Main program
+echo "=== Time Tracking ==="
+
+# Select or manage jobs
+SELECTED_JOB=""
+if ! manage_jobs; then
+  echo "No job selection made. Exiting program."
+  exit 0
+fi
+
+# Job has been selected, now timer functions
+BM_DATE=$(date +"%B-%Y-%-d")
+JOB_FILE="$ZEIT_DIR/${SELECTED_JOB// /_}.txt"  # Replace spaces with underscores
+
+start_time=0
+paused_time=0
+pause_start=0
+running=false
+paused=false
+
+function print_help {
+  echo "\n=== Timer Commands for '$SELECTED_JOB' ==="
+  echo "  s    -- Start timer"
+  echo "  p    -- Pause/resume timer"
+  echo "  e    -- End timer and save time"
+  echo "  u    -- Show timer status"
+  echo "  h    -- Show help"
+}
+
+function write_time {
+  total_time=$((paused_time + $(($(date +%s) - start_time))))
+  
+  # Round up to full quarter hours
+  # 900 seconds = 15 minutes
+  remainder=$((total_time % 900))
+  if [[ $remainder -gt 0 ]]; then
+    total_time=$((total_time + 900 - remainder))
+  fi
+  
+  hours=$(LC_NUMERIC=C awk "BEGIN {print $total_time/3600}")
+  hours=$(echo "$hours" | sed 's/,/./g')
+  printf "%s = %.2f hrs\n" "$BM_DATE" "$hours" >> "$JOB_FILE"
+  echo "\nSaved: $BM_DATE = ${hours} hrs for job '$SELECTED_JOB' (rounded up to quarter hour)"
+}
+
+function format_time {
+  local seconds=$1
+  local hours=$((seconds / 3600))
+  local minutes=$(((seconds % 3600) / 60))
+  local secs=$((seconds % 60))
+  printf "%02d:%02d:%02d" $hours $minutes $secs
+}
+
+function show_timer {
+  if [[ $running == true ]]; then
+    if [[ $paused == true ]]; then
+      current_time=$((paused_time + $(($pause_start - start_time))))
+    else
+      current_time=$((paused_time + $(($(date +%s) - start_time))))
+    fi
+    local time_str=$(format_time $current_time)
+    local status_str="RUNNING"
+    [[ $paused == true ]] && status_str="PAUSED"
+    echo -ne "\r[$SELECTED_JOB] $time_str ($status_str) | Command: "
+  else
+    echo -ne "\r[$SELECTED_JOB] Timer stopped | Command: "
+  fi
+}
+
+print_help
+
+while true; do
+  show_timer
+  # Read with 1 second timeout
+  if read -t 1 -sk1 cmd; then
+    echo ""
+    case $cmd in
+    s) # start
+      if [[ $running == false ]]; then
+        start_time=$(date +%s)
+        running=true
+        paused=false
+        paused_time=0
+        echo "Timer STARTED for '$SELECTED_JOB'."
+      elif [[ $paused == true ]]; then
+        paused_time=$((paused_time + $(($(date +%s) - pause_start))))
+        paused=false
+        echo "Timer RESUMED."
+      else
+        echo "Timer is already running."
+      fi
+      ;;
+    p) # pause
+      if [[ $running == true ]] && [[ $paused == false ]]; then
+        pause_start=$(date +%s)
+        paused=true
+        echo "Timer PAUSED."
+      elif [[ $paused == true ]]; then
+        paused_time=$((paused_time + $(($(date +%s) - pause_start))))
+        paused=false
+        echo "Timer RESUMED."
+      else
+        echo "Timer is not running."
+      fi
+      ;;
+    e) # exit
+      if [[ $running == true ]]; then
+        if [[ $paused == true ]]; then
+          paused_time=$((paused_time + $(($(date +%s) - pause_start))))
+        fi
+        write_time
+      else
+        echo "No active timer to save."
+      fi
+      echo "Exiting timer script..."
+            # Search for time_summary in the same directory as this script or in PATH
+      SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+      if [[ -x "$SCRIPT_DIR/time_summary" ]]; then
+        "$SCRIPT_DIR/time_summary" "$SELECTED_JOB"
+      elif command -v time_summary >/dev/null 2>&1; then
+        time_summary "$SELECTED_JOB"
+      else
+        echo "Warning: time_summary script not found."
+      fi
+      break
+      ;;
+    u) # status
+      if [[ $running == true ]]; then
+        if [[ $paused == true ]]; then
+          current_time=$((paused_time + $(($pause_start - start_time))))
+        else
+          current_time=$((paused_time + $(($(date +%s) - start_time))))
+        fi
+        hours=$(LC_NUMERIC=C awk "BEGIN {print $current_time/3600}")
+        printf "Current: %.2f hrs for job '$SELECTED_JOB'\n" "$hours"
+        [[ $paused == true ]] && echo "Status: PAUSED" || echo "Status: RUNNING"
+      else
+        echo "Timer is not running."
+      fi
+      ;;
+    h) # help
+      print_help
+      ;;
+    *)
+      [[ -n "$cmd" ]] && echo "Unknown command! (h = help)"
+      ;;
+    esac
+  fi
+done
