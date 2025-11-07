@@ -137,16 +137,19 @@ fi
 BM_DATE=$(date +"%B-%Y-%-d")
 JOB_FILE="$ZEIT_DIR/${SELECTED_JOB// /_}.txt"  # Replace spaces with underscores
 
-start_time=0
+start_time=$(date +%s)
 paused_time=0
 pause_start=0
-running=false
+paused_display_time=0
+running=true
 paused=false
+
+echo "\n✓ Timer automatically started for '$SELECTED_JOB'!"
 
 function print_help {
   echo "\n=== Timer Commands for '$SELECTED_JOB' ==="
-  echo "  s    -- Start timer"
-  echo "  p    -- Pause/resume timer"
+  echo "  p    -- Pause timer"
+  echo "  r    -- Resume timer (after pause)"
   echo "  e    -- End timer and save time"
   echo "  u    -- Show timer status"
   echo "  h    -- Show help"
@@ -179,8 +182,10 @@ function format_time {
 function show_timer {
   if [[ $running == true ]]; then
     if [[ $paused == true ]]; then
-      current_time=$((paused_time + $(($pause_start - start_time))))
+      # During pause, show frozen time
+      current_time=$paused_display_time
     else
+      # During running timer, calculate current time
       current_time=$((paused_time + $(($(date +%s) - start_time))))
     fi
     local time_str=$(format_time $current_time)
@@ -195,37 +200,37 @@ function show_timer {
 print_help
 
 while true; do
-  show_timer
+  # Show timer only if not paused
+  if [[ $paused == false ]]; then
+    show_timer
+  fi
+  
   # Read with 1 second timeout
   if read -t 1 -sk1 cmd; then
     echo ""
     case $cmd in
-    s) # start
-      if [[ $running == false ]]; then
-        start_time=$(date +%s)
-        running=true
-        paused=false
-        paused_time=0
-        echo "Timer STARTED for '$SELECTED_JOB'."
-      elif [[ $paused == true ]]; then
-        paused_time=$((paused_time + $(($(date +%s) - pause_start))))
-        paused=false
-        echo "Timer RESUMED."
-      else
-        echo "Timer is already running."
-      fi
-      ;;
     p) # pause
       if [[ $running == true ]] && [[ $paused == false ]]; then
         pause_start=$(date +%s)
+        # Save current time for freezing
+        paused_display_time=$((paused_time + $(($(date +%s) - start_time))))
         paused=true
-        echo "Timer PAUSED."
-      elif [[ $paused == true ]]; then
-        paused_time=$((paused_time + $(($(date +%s) - pause_start))))
+        # Show paused timer
+        show_timer
+        echo "Timer PAUSED. Press 'r' to resume."
+      else
+        echo "Timer is not running or already paused."
+      fi
+      ;;
+    r) # resume
+      if [[ $paused == true ]]; then
+        # Reset start time so pause duration isn't counted
+        local pause_duration=$(($(date +%s) - pause_start))
+        start_time=$((start_time + pause_duration))
         paused=false
         echo "Timer RESUMED."
       else
-        echo "Timer is not running."
+        echo "Timer is not paused."
       fi
       ;;
     e) # exit

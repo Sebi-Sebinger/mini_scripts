@@ -35,9 +35,11 @@ export TIMETRACKING_DIR="/path/to/your/timedata"
 ./time_tracker
 ```
 
+The timer starts automatically after selecting a job.
+
 ### Timer mode functions
-- `s` - Start timer
-- `p` - Pause/resume timer  
+- `p` - Pause timer
+- `r` - Resume timer (after pause)
 - `e` - End timer and save time
 - `u` - Show timer status
 - `h` - Show help
@@ -64,7 +66,7 @@ The scripts create the following files in the data directory:
 ## Features
 
 - ✅ Job management (create, delete, list)
-- ✅ Timer with start/pause/stop functionality
+- ✅ Timer with auto-start and pause/resume functionality
 - ✅ Automatic rounding to quarter hours
 - ✅ Monthly evaluation
 - ✅ Real-time display of running time
